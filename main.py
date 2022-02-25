@@ -11,14 +11,17 @@ from colorama import Fore
 class Field:
     x_coord: int
     y_coord: int
-    flagged: bool = False
+    clicked: bool = False
+    solved: bool = False
     minecount: int = -1
+    mine_probability: float = -1
 
 
 class MineSweeperBot:
-    def __init__(self, width, height, images_folder):
+    def __init__(self, width, height, minecount, images_folder):
         self.minefield_width = width
         self.minefield_height = height
+        self.minecount = minecount
         self.images_folder = images_folder
 
         self.monitor = {"top": 0, "left": 0, "width": 1366, "height": 768}
@@ -79,17 +82,20 @@ class MineSweeperBot:
             row_string = ""
             for j in range(self.minefield_height):
                 field = self.minefield[i][j]
-                if field.minecount == -1:
+                if field.mine_probability == 1:
+                    row_string += f"{Fore.RED}*\t"
+                elif field.solved:
+                    row_string += f"{Fore.RESET}{field.minecount:<1}\t"
+                elif field.minecount == -1:
                     row_string += f"{Fore.RESET}-\t"
                 elif field.minecount == 0:
                     row_string += f"{Fore.RESET} \t"
-                else:
-                    if 1 <= field.minecount <= 3:
-                        row_string += f"{Fore.BLUE}{field.minecount:<1}\t"
-                    elif 4 <= field.minecount <= 5:
-                        row_string += f"{Fore.YELLOW}{field.minecount:<1}\t"
-                    elif 6 <= field.minecount <= 8:
-                        row_string += f"{Fore.RED}{field.minecount:<1}\t"
+                elif 1 <= field.minecount <= 2:
+                    row_string += f"{Fore.BLUE}{field.minecount:<1}\t"
+                elif 3 <= field.minecount <= 5:
+                    row_string += f"{Fore.YELLOW}{field.minecount:<1}\t"
+                elif 6 <= field.minecount <= 8:
+                    row_string += f"{Fore.MAGENTA}{field.minecount:<1}\t"
             print(row_string)
 
     def scan_minefield(self, first_scan=False):
@@ -99,8 +105,6 @@ class MineSweeperBot:
             code=cv2.COLOR_RGB2GRAY,
         )
 
-        print(f"{Fore.CYAN}Escaneando o campo minado...{Fore.CYAN}")
-
         if first_scan:
             result = cv2.matchTemplate(
                 image=self.assets["unclicked"],
@@ -108,9 +112,6 @@ class MineSweeperBot:
                 method=cv2.TM_CCOEFF_NORMED,
             )
             (y_coords, x_coords) = np.where(result >= 0.8)
-            print(
-                f"\t{Fore.YELLOW}{len(y_coords)}{Fore.CYAN} campos encontrados{Fore.RESET}"
-            )
             counter = 0
 
             for i in range(self.minefield_width):
@@ -139,52 +140,31 @@ class MineSweeperBot:
                         if np.where(result >= 0.9)[0].size:
                             if asset_name == "blank":
                                 self.minefield[i][j].minecount = 0
+                                self.minefield[i][j].mine_probability = 0
                             elif asset_name == "exploded":
-                                print(f"{Fore.RED} Fim do jogo :( {Fore.RESET}")
+                                self.minefield[i][j].mine_probability = 1
                                 return "gameover"
                             elif asset_name.isdigit():
                                 self.minefield[i][j].minecount = int(asset_name)
+                                self.minefield[i][j].mine_probability = 0
 
-        # clone = screenshot.copy()
-        # for (x, y) in zip(xCoords, yCoords):
-        #     # draw the bounding box on the image
-        #     cv2.rectangle(clone, (x, y), (x + 20, y + 20),
-        #                   (255, 0, 0), 3)
-        # cv2.imshow("Before NMS", clone)
-        # cv2.waitKey(0)
-        a = 1
+    def click(self, row=-1, column=-1, random_field=False, right_button=False):
+        if random_field:
+            unclicked_fields = list()
+            for i in range(self.minefield_width):
+                for j in range(self.minefield_height):
+                    if self.minefield[i][j].minecount == -1:
+                        unclicked_fields.append((i, j))
+            random_field = unclicked_fields[np.random.randint(len(unclicked_fields))]
+            row = random_field[0]
+            column = random_field[1]
 
-    def click(
-        self,
-        row=-1,
-        column=-1,
-        right_button=False
-    ):
-        if (row == -1) and (column == -1):
-            row = (
-                np.random.randint(
-                    low=int(self.minefield_width * 0.25),
-                    high=int(self.minefield_width * 0.75),
-                )
-                - 1
-            )
-            column = (
-                np.random.randint(
-                    low=int(self.minefield_height * 0.25),
-                    high=int(self.minefield_height * 0.75),
-                )
-                - 1
-            )
-            pyautogui.click(
-                x=self.minefield[row][column].x_coord + 2,
-                y=self.minefield[row][column].y_coord + 2,
-            )
-        else:
-            pyautogui.click(
-                x=self.minefield[row][column].x_coord + 2,
-                y=self.minefield[row][column].y_coord + 2,
-                button="right" if right_button else "left"
-            )
+        pyautogui.click(
+            x=self.minefield[row][column].x_coord + self.field_shape[0] // 2,
+            y=self.minefield[row][column].y_coord + self.field_shape[1] // 2,
+            button="right" if right_button else "left",
+        )
+        self.minefield[row][column].clicked = True
 
     def coordinates_around_field(self, row, column):
         coords = list()
@@ -192,8 +172,9 @@ class MineSweeperBot:
             for j in [-1, 0, 1]:
                 if (i == 0) and (j == 0):
                     continue
-                if 0 <= row + i < (self.minefield_width - 1) and 0 <= column + j < (
-                    self.minefield_height - 1
+                if (
+                    0 <= row + i < self.minefield_width
+                    and 0 <= column + j < self.minefield_height
                 ):
                     coords.append((row + i, column + j))
 
@@ -204,42 +185,117 @@ class MineSweeperBot:
         mine_fields = list()
         for i in range(self.minefield_width):
             for j in range(self.minefield_height):
+                if self.minefield[i][j].solved:
+                    continue
                 coords = self.coordinates_around_field(row=i, column=j)
                 solved_counter = 0
                 for field_around_coords in coords:
-                    if self.minefield[field_around_coords[0]][field_around_coords[1]].minecount != -1:
+                    if (
+                        self.minefield[field_around_coords[0]][
+                            field_around_coords[1]
+                        ].minecount
+                        != -1
+                    ):
                         solved_counter += 1
-                if solved_counter == (len(coords) - self.minefield[i][j].minecount) and self.minefield[i][j].minecount > 0:
+                if (
+                    solved_counter == (len(coords) - self.minefield[i][j].minecount)
+                ) and self.minefield[i][j].minecount > 0:
+                    self.minefield[i][j].solved = True
                     solved_fields.append((i, j))
 
         for field in solved_fields:
             coords = self.coordinates_around_field(row=field[0], column=field[1])
             for field_around_coords in coords:
-                if self.minefield[field_around_coords[0]][field_around_coords[1]].minecount == -1:
+                if (
+                    self.minefield[field_around_coords[0]][
+                        field_around_coords[1]
+                    ].mine_probability
+                    == -1
+                ):
                     mine_fields.append((field_around_coords[0], field_around_coords[1]))
 
-        return set(solved_fields), set(mine_fields)
+        return set(mine_fields)
+
+    def find_solved_fields(self):
+        solved_fields = list()
+        for i in range(self.minefield_width):
+            for j in range(self.minefield_height):
+                if self.minefield[i][j].solved:
+                    continue
+                coords = self.coordinates_around_field(row=i, column=j)
+                mine_counter = 0
+                for field_around_coords in coords:
+                    if (
+                        self.minefield[field_around_coords[0]][
+                            field_around_coords[1]
+                        ].mine_probability
+                        == 1
+                    ):
+                        mine_counter += 1
+                if (mine_counter == self.minefield[i][j].minecount) and self.minefield[
+                    i
+                ][j].minecount > 0:
+                    solved_fields.append((i, j))
+        return solved_fields
 
     def run(self):
         self.scan_minefield(first_scan=True)
-        self.click()
+        field_count = len(self.minefield) * len(self.minefield[0])
+        print(
+            f"{Fore.RESET}0 - {Fore.CYAN}Escaneando campo minado: {Fore.YELLOW}{field_count}{Fore.CYAN} campos encontrados"
+        )
+        self.click(random_field=True)
 
-        # scan = "running"
-        # while scan != "gameover":
-        self.scan_minefield()
+        iteration = 0
+        minecount = 0
 
-        solved_fields, mine_fields = self.find_mine_fields()
+        while True:
+            iteration += 1
+            scan = self.scan_minefield()
+            if scan == "gameover":
+                print(f"{Fore.RESET}{iteration} - {Fore.RED}Fim do jogo :(")
+                break
 
-        for field in mine_fields:
-            self.click(row=field[0], column=field[1], right_button=True)
-        for field in solved_fields:
-            self.click(row=field[0], column=field[1])
-        print(solved_fields)
-        print(mine_fields)
+            mine_fields = self.find_mine_fields()
+
+            if len(mine_fields):
+                print(
+                    f"{Fore.RESET}{iteration} - {Fore.CYAN}Marcando {Fore.YELLOW}{len(mine_fields)}{Fore.CYAN} campos com minas"
+                )
+                for field in mine_fields:
+                    self.click(row=field[0], column=field[1], right_button=True)
+                    self.minefield[field[0]][field[1]].mine_probability = 1
+                    self.minefield[field[0]][field[1]].solved = True
+                    minecount += 1
+
+            solved_fields = self.find_solved_fields()
+
+            for field in solved_fields:
+                if self.minefield[field[0]][field[1]].solved:
+                    continue
+                self.click(row=field[0], column=field[1])
+                self.minefield[field[0]][field[1]].solved = True
+
+            if minecount == self.minecount:
+                print(f"{Fore.RESET}{iteration} - {Fore.BLUE}Fim do jogo!")
+                break
+
+            if len(mine_fields) == 0:
+                print(
+                    f"{Fore.RESET}{iteration} - {Fore.CYAN}Nenhuma ação possível, {Fore.YELLOW}clicando em um campo aleatório"
+                )
+                self.click(random_field=True)
+
         self.print_minefield()
-        # loop nos dados
-        pass
 
 
 if __name__ == "__main__":
-    MineSweeperBot(width=9, height=9, images_folder="./bot_assets").run()
+    easy = {"width": 9, "height": 9, "minecount": 9}
+    medium = {"width": 16, "height": 16, "minecount": 40}
+    expert = {"width": 30, "height": 16, "minecount": 99}
+    MineSweeperBot(
+        width=medium["width"],
+        height=medium["height"],
+        minecount=medium["minecount"],
+        images_folder="./bot_assets",
+    ).run()
