@@ -4,7 +4,9 @@ from mss import mss
 import numpy as np
 import os
 from dataclasses import dataclass
-from colorama import Fore
+from colorama import Fore, init
+
+init()
 
 
 @dataclass
@@ -153,7 +155,7 @@ class MineSweeperBot:
             unclicked_fields = list()
             for i in range(self.minefield_width):
                 for j in range(self.minefield_height):
-                    if self.minefield[i][j].minecount == -1:
+                    if self.minefield[i][j].minecount == -1 and self.minefield[i][j].mine_probability != 1:
                         unclicked_fields.append((i, j))
             random_field = unclicked_fields[np.random.randint(len(unclicked_fields))]
             row = random_field[0]
